@@ -113,10 +113,10 @@ def convert_plink_to_eigenstrat(outprefix):
 
 def run_smartpca(outprefix, threads):
     """Run smartpca"""
-    with open('pcaparams', 'w') as f:
-        f.write(pcaparams_template.format(PREFIX=outprefix, THREADS=threads))
-        f.flush()
-        result = subprocess.run(['smartpca', '-p', f.name])
+    with tempfile.NamedTemporaryFile(mode='w') as tmp:
+        tmp.write(pcaparams_template.format(PREFIX=outprefix, THREADS=threads))
+        tmp.flush()
+        result = subprocess.run(['smartpca', '-p', tmp.name])
     return result.returncode == 0
 
 def run_plink_pca(vcf, outprefix):
@@ -156,6 +156,7 @@ def main():
             if (os.path.isfile(f)
                 and f.startswith(args.outprefix)
                 and not f.endswith('.evec')
+                and not f.endswith('.eval')
                 and not f.endswith('.eigenvec')
                 and not f.endswith('.mdist')
                 and not f.endswith('.mdist.id')

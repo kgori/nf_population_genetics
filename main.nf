@@ -9,6 +9,15 @@ params.sampleList
 /** Files naming outgroup samples to remove from PCA */
 params.outgroupList
 
+/** Single file listing the samples to be used for ADMIXTURE */
+params.admixtureList
+
+/** Single file listing the population each sample belongs to */
+params.populations
+
+/** Single file stating the samples to include in a PCA plot */
+params.pcaIngroupSamples
+
 params.outDir
 
 process concat_filter_lists {
@@ -55,6 +64,7 @@ process remove_bad_samples {
 
 process select_transversion_sites {
     cpus 4
+    publishDir "${params.outDir}/transversions"
 
     input:
     path vcf
@@ -71,6 +81,7 @@ process select_transversion_sites {
 
 process linkage_pruning {
     cpus 4
+    publishDir "${params.outDir}/pruned"
 
     input:
     tuple path(vcf), path(vcf_index)
@@ -80,8 +91,8 @@ process linkage_pruning {
 
     script:
     """
-    make_annotation_bed.sh "${vcf}" > annotation.bed.gz
-    bcftools annotate --threads ${task.cpus} -c CHROM,FROM,TO,ID -a annotation.bed.gz -o annotated.vcf.gz "${vcf}"
+    make_annotation_bed.sh "${vcf}" # creates id_annotation.bed.gz
+    bcftools annotate --threads ${task.cpus} -c CHROM,FROM,TO,ID -a id_annotation.bed.gz -o annotated.vcf.gz "${vcf}"
     plink --threads ${task.cpus} \
       --indep-pairwise 50 5 0.5 \
       --const-fid \
@@ -102,9 +113,7 @@ process linkage_pruning {
       bcftools reheader --threads ${task.cpus} -s reheader.txt -o tmp "${vcf.getBaseName(2)}_pruned.vcf" &&
       bcftools view --threads ${task.cpus} -o "${vcf.getBaseName(2)}_pruned.vcf.gz" -Oz tmp && rm tmp
     bcftools index --threads ${task.cpus} "${vcf.getBaseName(2)}_pruned.vcf.gz"
-    rm annotation.bed.gz
-    rm plink_pruning*
-    rm reheader.txt
+    rm annotated.vcf.gz
     """
 }
 
@@ -127,12 +136,13 @@ process remove_outgroups {
 
 process pca {
     cpus 4
+    publishDir "${params.outDir}/pca"
 
     input:
     tuple path(vcf), path(vcf_index)
 
     output:
-    path "${vcf.getBaseName(2)}.pca.evec"
+    tuple path("${vcf.getBaseName(2)}.pca.evec"), path("${vcf.getBaseName(2)}.eval")
 
     script:
     """
@@ -144,12 +154,31 @@ process pca {
     """
 }
 
+process plot_pca {
+    publishDir "${params.outDir}/pca"
+
+    input:
+    tuple path(pca_evec_file), path(pca_eval_file)
+    path populations
+    path samples
+
+    output:
+    path "${pca_evec_file.baseName}.pdf"
+
+    script:
+    """
+    pca_plot.R -p "${populations}" -i "${samples}" -d "${pca_evec_file}" -o "${pca_evec_file.baseName}.pdf"
+    """
+}
+
 process bionj {
+    publishDir "${params.outDir}/bionj"
+
     input:
     tuple path(vcf), path(vcf_index)
 
     output:
-    tuple path("${vcf.getBaseName(2)}_bionj.nwk"), path("${vcf.getBaseName(2)}_bionj.pdf")
+    path("${vcf.getBaseName(2)}_bionj.nwk")
 
     script:
     """
@@ -161,11 +190,121 @@ process bionj {
     """
 }
 
+process plot_bionj_tree {
+    publishDir "${params.outDir}/bionj"
+
+    input:
+    path(newick)
+    path(populations)
+
+    output:
+    path("${newick.baseName}.pdf")
+
+    script:
+    """
+    tree_plot.R -p "${populations}" -t "${newick}" -o "${newick.baseName}.pdf"
+    """
+}
+
+process prepare_admixture_input {
+    cpus 4
+
+    input:
+    path sample_list
+    tuple path(vcf), path(vcf_index)
+
+    output:
+    tuple path("${vcf.getBaseName(2)}_admixture.bed"), path("${vcf.getBaseName(2)}_admixture.bim"), path("${vcf.getBaseName(2)}_admixture.fam")
+
+    script:
+    """
+    bcftools view --threads ${task.cpus} -S "${sample_list}" --force-samples "${vcf}" -Oz -o "${vcf.getBaseName(2)}_admixture.vcf.gz"
+    plink --threads ${task.cpus} \
+      --double-id \
+      --chr-set 38 \
+      --real-ref-alleles \
+      --keep-allele-order \
+      --vcf "${vcf.getBaseName(2)}_admixture.vcf.gz" \
+      --make-bed \
+      --out "${vcf.getBaseName(2)}_admixture"
+    """
+}
+
+process run_admixture {
+    cpus { 4 * 2**(task.attempt-1) }
+    executor 'lsf'
+    queue 'normal'
+    memory 1.GB
+    time { 2.h * 2**(task.attempt-1) }
+    errorStrategy 'retry'
+    maxRetries 2
+
+    publishDir "${params.outDir}/admixture/${rep}"
+
+    input:
+    tuple path(bed), path(bim), path(fam), val(k), val(rep)
+
+    output:
+    tuple val(k), val(rep), path("${bed.baseName}.${k}.Q"), path("${bed.baseName}.${k}.P"), emit: results
+    tuple val(k), val(rep), path("${bed.baseName}.${k}.log"), emit: logs
+
+    script:
+    seed = "99${k * 1000}${rep}".toString()
+    
+    """
+    admixture --cv=10 -j${task.cpus} -s "${seed}" "${bed}" ${k} | tee "${bed.baseName}.${k}.log"
+    """
+}
+
+process prepare_admixtools_input {
+    cpus 4
+
+    input:
+    tuple path(vcf), path(vcf_index)
+
+    output:
+    tuple path("${vcf.getBaseName(2)}_admixtools.bed"), path("${vcf.getBaseName(2)}_admixtools.bim"), path("${vcf.getBaseName(2)}_admixtools.fam")
+
+    script:
+    """
+    plink --threads ${task.cpus} \
+      --double-id \
+      --chr-set 38 \
+      --real-ref-alleles \
+      --keep-allele-order \
+      --vcf "${vcf}" \
+      --make-bed \
+      --out "${vcf.getBaseName(2)}_admixtools"
+    """
+}
+process f4_stats {
+    input:
+    tuple path(bed), path(bim), path(fam)
+    tuple val(id), file(filter_list)
+
+    output:
+    path("${vcf.getBaseName(2)}_f4_stats.pdf")
+
+    script:
+    """
+    f4_statistics.R \
+      --input "${bed}" \
+      --output "${vcf.baseName}" \
+      --plot-width 18 \
+      --filter "${filter_list[0]}" \
+      --second-filter "${filter_list[1]}"
+    """
+}
+
 workflow {
     /** Set up channels for input files */
     input_vcf_ch = Channel.fromPath(params.vcfFile, checkIfExists: true)
     bad_samples = Channel.fromPath(params.sampleList.split(',') as List<String>, checkIfExists: true)
     outgroup_samples = Channel.fromPath(params.outgroupList.split(',') as List<String>, checkIfExists: true)
+    admixture_samples = Channel.fromPath(params.admixtureList, checkIfExists: true)
+    populations = Channel.fromPath(params.populations, checkIfExists: true)
+    pca_plot_samples = Channel.fromPath(params.pcaIngroupSamples, checkIfExists: true)
+    f4plot_exclusions = Channel.fromFilePairs("data/sample_lists/f4_exclusions_{1,2}.txt", checkIfExists: true)
     
     /** Concatenate lists of samples to be filtered from VCFs */
     filter_list = concat_filter_lists(bad_samples.collect())
@@ -183,12 +322,23 @@ workflow {
     ingroup = remove_outgroups(pruned, outgroup_list)
 
     /** Run analyses */
+    /** PCA */
     pca(ingroup)
-    bionj(pruned)
+    plot_pca(pca.out[0], populations, pca_plot_samples)
 
-    publish:
-    pruned.out to: "${params.outDir}/pruned"
-    transversions.out to: "${params.outDir}/transversions"
-    pca.out to: "${params.outDir}/pca"
-    bionj.out to: "${params.outDir}/bionj"
+    /** Phylogeny */
+    bionj(pruned)
+    plot_bionj_tree(bionj.out[0], populations)
+    
+    /** Run ADMIXTURE */
+    admixture_files = prepare_admixture_input(admixture_samples, pruned)
+    admixture_ks = Channel.from(1..15)
+    admixture_reps = Channel.from(1..10)
+    admixture_inputs = admixture_files.combine(admixture_ks.combine(admixture_reps))
+    run_admixture(admixture_inputs)
+
+    /** f4-statistics */
+
+    admixtools_files = prepare_admixtools_input(transversions)
+    f4_stats(transversions, f4plot_exclusions)
 }

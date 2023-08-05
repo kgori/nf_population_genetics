@@ -29,8 +29,4 @@ if ("AndeanFox01" %in% t$tip.label) t <- root(t, "AndeanFox01")
 
 t <- ladderize(t)
 
-pdf(paste0(args$prefix, "_bionj.pdf"), width = 18, height = 128)
-plot(t)
-dev.off()
-
 write.tree(t, paste0(args$prefix, "_bionj.nwk"))
