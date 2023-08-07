@@ -190,6 +190,71 @@ process bionj {
     """
 }
 
+process extract_variant_ids {
+    input:
+    tuple path(vcf), path(vcf_index)
+
+    output:
+    path("${vcf.getBaseName(2)}_variant_ids.txt")
+
+    script:
+    """
+    extract_vcf_variant_ids.py -i "${vcf}" -o "${vcf.getBaseName(2)}_variant_ids.txt"
+    """
+}
+
+process make_bootstrap_vcf {
+    cpus 1
+    executor 'lsf'
+    queue 'normal'
+    memory 500.MB
+    time { 1.h * 2**(task.attempt-1) }
+    errorStrategy 'retry'
+    maxRetries 2
+
+    input:
+    tuple path(vcf), path(vcf_index), path(variant_ids), val(bootstrap_id)
+
+    output:
+    tuple path("${vcf.getBaseName(2)}_bootstrap_${bootstrap_id}.vcf.gz"), path("${vcf.getBaseName(2)}_bootstrap_${bootstrap_id}.vcf.gz.csi")
+
+    script:
+    """
+    make_bootstrap_vcf.py \
+      --input-ids="${variant_ids}" \
+      --input-vcf="${vcf}" \
+      --output-vcf="${vcf.getBaseName(2)}_bootstrap_${bootstrap_id}.vcf.gz" \
+      --seed "${bootstrap_id}"
+    """
+}
+
+process bionj_bootstrap {
+    cpus 1
+    executor 'lsf'
+    queue 'normal'
+    memory 500.MB
+    time { 1.h * 2**(task.attempt-1) }
+    errorStrategy 'retry'
+    maxRetries 2
+
+    publishDir "${params.outDir}/bionj/bootstrap"
+
+    input:
+    tuple path(vcf), path(vcf_index)
+
+    output:
+    path("${vcf.getBaseName(2)}_bionj.nwk")
+
+    script:
+    """
+    run_bionj.py \
+      --vcf "${vcf}" \
+      --outprefix "${vcf.getBaseName(2)}" \
+      --cleanup \
+      --r-script run_bionj.R
+    """
+}
+
 process plot_bionj_tree {
     publishDir "${params.outDir}/bionj"
 
@@ -281,15 +346,19 @@ process f4_stats {
     input:
     tuple path(bed), path(bim), path(fam)
     tuple val(id), file(filter_list)
+    path populations
 
     output:
-    path("${vcf.getBaseName(2)}_f4_stats.pdf")
+    tuple path("${bed.baseName}_HT_combined.pdf"), path("${bed.baseName}_CTVT_combined.pdf")
+
+    publishDir "${params.outDir}/f4stats"
 
     script:
     """
     f4_statistics.R \
-      --input "${bed}" \
-      --output "${vcf.baseName}" \
+      --input "${bed.baseName}" \
+      --output "${bed.baseName}" \
+      --populations-file "${populations}" \
       --plot-width 18 \
       --filter "${filter_list[0]}" \
       --second-filter "${filter_list[1]}"
@@ -329,6 +398,11 @@ workflow {
     /** Phylogeny */
     bionj(pruned)
     plot_bionj_tree(bionj.out[0], populations)
+    variant_ids = extract_variant_ids(pruned)
+    /** Run bootstrap replicates in batches of 10 using buffer */
+    pruned.combine(variant_ids).combine(Channel.from(1..100)) 
+        | make_bootstrap_vcf
+        | bionj_bootstrap
     
     /** Run ADMIXTURE */
     admixture_files = prepare_admixture_input(admixture_samples, pruned)
@@ -338,7 +412,6 @@ workflow {
     run_admixture(admixture_inputs)
 
     /** f4-statistics */
-
     admixtools_files = prepare_admixtools_input(transversions)
-    f4_stats(transversions, f4plot_exclusions)
+    f4_stats(admixtools_files, f4plot_exclusions, populations)
 }

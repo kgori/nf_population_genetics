@@ -7,6 +7,8 @@ parser$add_argument("--filter",
     help = "Filter file, containing names of samples to filter out")
 parser$add_argument("--second-filter",
     help = "Filter file, containing names of samples to omit from smaller plots")
+parser$add_argument("--populations-file",
+    help = "File containing population information")
 parser$add_argument("--output", help = "Output prefix")
 parser$add_argument("--plot-width", type = "integer",
     help = "Width of plot in inches")
@@ -119,7 +121,7 @@ make_plot <- function(table, pointsize = 2.0, linewidth = 1.0, title = "f4(Andea
 
 tables <- function() {
     require(data.table)
-    metadata <- fread("../../pca/data/populations.csv")
+    metadata <- fread(args$populations_file)
     metadata[ancient == TRUE, population := "Ancient"]
     metadata[startsWith(pop2, "Dog") & pop2 == "DogEurope", population := "Europe"]
     metadata[startsWith(pop2, "Dog") & pop2 %in% c("DogMix", "DogUnknown", "DogIntermedWE"), population := "Mix/Unknown"]
