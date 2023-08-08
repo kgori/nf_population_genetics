@@ -94,7 +94,7 @@ process linkage_pruning {
     make_annotation_bed.sh "${vcf}" # creates id_annotation.bed.gz
     bcftools annotate --threads ${task.cpus} -c CHROM,FROM,TO,ID -a id_annotation.bed.gz -o annotated.vcf.gz "${vcf}"
     plink --threads ${task.cpus} \
-      --indep-pairwise 50 5 0.5 \
+      --indep-pairwise 100kb 1 0.8 \
       --const-fid \
       --chr-set 38 \
       --real-ref-alleles \
