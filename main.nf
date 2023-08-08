@@ -18,6 +18,15 @@ params.populations
 /** Single file stating the samples to include in a PCA plot */
 params.pcaIngroupSamples
 
+/** A pair of files identifying the samples to exclude from the f4 statistics plots */
+params.f4plotExclusions
+
+/** A file that describes how samples are pooled for qpAdm */
+params.qpAdmPooling
+
+/** A file listing all the targets to use when computing qpAdm */
+params.qpAdmTargets
+
 params.outDir
 
 process concat_filter_lists {
@@ -365,6 +374,68 @@ process f4_stats {
     """
 }
 
+process make_qpadm_input_files {
+    input:
+    tuple path(bed), path(bim), path(fam)
+    path(populations)
+
+    output:
+    tuple path("${bed.baseName}.pop1.bed"), path("${bed.baseName}.pop1.bim"), path("${bed.baseName}.pop1.fam")
+    path("adm_combinations_core.txt")
+    path("adm_combinations_comprehensive.txt")
+
+    script:
+    """
+    repopulate_plink.R \
+      --input-prefix "${bed.baseName}" \
+      --output-prefix "${bed.baseName}.pop1" \
+      --pooling "${populations}"
+    make_adm_combinations.R
+    """
+}
+
+process run_qpadm {
+    cpus { 1 }
+    executor 'lsf'
+    queue 'small'
+    memory 500.MB
+    time { 30.min }
+
+    input:
+    tuple path(bed), path(bim), path(fam), val(left), val(right), val(target)
+
+    output:
+    path("${target}.${left.replace(',','_')}.${right.replace(',','_')}.RDS")
+
+    publishDir "${params.outDir}/qpadm/rds_files"
+
+    script:
+    """
+    run_adm_combo.R \
+      --target="${target}" \
+      --left="${left}" \
+      --right="${right}" \
+      --sampleset="${bed.baseName}"
+    """
+}
+
+process collate_qpadm {
+    input:
+    path rds
+
+    output:
+    path("qpadm_results.tsv")
+
+    publishDir "${params.outDir}/qpadm"
+
+    script:
+    """
+    collate_qpadm_results.R \
+      --subdir "\$PWD" \
+      --outfile "qpadm_results.tsv"
+    """
+}
+
 workflow {
     /** Set up channels for input files */
     input_vcf_ch = Channel.fromPath(params.vcfFile, checkIfExists: true)
@@ -373,7 +444,9 @@ workflow {
     admixture_samples = Channel.fromPath(params.admixtureList, checkIfExists: true)
     populations = Channel.fromPath(params.populations, checkIfExists: true)
     pca_plot_samples = Channel.fromPath(params.pcaIngroupSamples, checkIfExists: true)
-    f4plot_exclusions = Channel.fromFilePairs("data/sample_lists/f4_exclusions_{1,2}.txt", checkIfExists: true)
+    f4plot_exclusions = Channel.fromFilePairs(params.f4plotExclusions, checkIfExists: true)
+    qpadm_pooling = Channel.fromPath(params.qpAdmPooling, checkIfExists: true)
+    qpadm_targets = Channel.fromPath(params.qpAdmTargets, checkIfExists: true)
     
     /** Concatenate lists of samples to be filtered from VCFs */
     filter_list = concat_filter_lists(bad_samples.collect())
@@ -414,4 +487,22 @@ workflow {
     /** f4-statistics */
     admixtools_files = prepare_admixtools_input(transversions)
     f4_stats(admixtools_files, f4plot_exclusions, populations)
+
+    /** qpAdm */
+    qpadm_inputs = make_qpadm_input_files(admixtools_files, qpadm_pooling)
+    combos = qpadm_inputs[1] | splitCsv(sep: '\t', header: true)
+    targets = qpadm_targets | splitText() { it.trim() }
+    run_qpadm_input_ch = qpadm_inputs[0].combine(combos).combine(targets)
+      .map { it -> [it[0], it[1], it[2], it[3].LEFT, it[3].RIGHT, it[4] ]}
+      .filter { 
+        def left = it[3].split(',');
+        def right = it[4].split(',');
+        def target = it[5];
+        !(left.contains(target) || right.contains(target))
+      }
+    qpadm_results = run_qpadm(run_qpadm_input_ch)
+    qpadm_results.collect() | collate_qpadm
+
+    
+
 }
