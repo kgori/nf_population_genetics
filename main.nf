@@ -264,6 +264,22 @@ process bionj_bootstrap {
     """
 }
 
+process annotate_bootstrap_info {
+    publishDir "${params.outDir}/bionj"
+
+    input:
+    path(bionj)
+    path('bootstrap/*.nwk')
+
+    output:
+    path("${bionj.baseName}.annotated.nwk")
+
+    script:
+    """
+    bootstrap_annotate_tree.R "${bionj}" bootstrap
+    """
+}
+
 process plot_bionj_tree {
     publishDir "${params.outDir}/bionj"
 
@@ -470,12 +486,13 @@ workflow {
 
     /** Phylogeny */
     bionj(pruned)
-    plot_bionj_tree(bionj.out[0], populations)
     variant_ids = extract_variant_ids(pruned)
     /** Run bootstrap replicates in batches of 10 using buffer */
     pruned.combine(variant_ids).combine(Channel.from(1..100)) 
         | make_bootstrap_vcf
         | bionj_bootstrap
+    bootstrapped_tree = annotate_bootstrap_info(bionj.out, bionj_bootstrap.out.collect())
+    plot_bionj_tree(bootstrapped_tree, populations)
     
     /** Run ADMIXTURE */
     admixture_files = prepare_admixture_input(admixture_samples, pruned)
