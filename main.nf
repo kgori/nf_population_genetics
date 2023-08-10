@@ -57,6 +57,10 @@ process concat_outgroup_lists {
 
 process remove_bad_samples {
     cpus 4
+    executor 'lsf'
+    queue 'normal'
+    memory 1.GB
+    time 2.h
 
     input:
     path vcf
@@ -71,8 +75,33 @@ process remove_bad_samples {
     """
 }
 
+process annotate_vcf {
+    cpus 4
+    executor 'lsf'
+    queue 'normal'
+    memory 1.GB
+    time 2.h
+
+    input:
+    path vcf
+
+    output:
+    path "${vcf.getBaseName(2)}_annotated.vcf.gz"
+
+    script:
+    """
+    make_annotation_bed.sh "${vcf}" # creates id_annotation.bed.gz
+    bcftools annotate --threads ${task.cpus} -c CHROM,FROM,TO,ID -a id_annotation.bed.gz -o "${vcf.getBaseName(2)}_annotated.vcf.gz" "${vcf}"
+    """
+}
+
 process select_transversion_sites {
     cpus 4
+    executor 'lsf'
+    queue 'normal'
+    memory 1.GB
+    time 2.h
+
     publishDir "${params.outDir}/transversions"
 
     input:
@@ -90,6 +119,11 @@ process select_transversion_sites {
 
 process linkage_pruning {
     cpus 4
+    executor 'lsf'
+    queue 'normal'
+    memory 1.GB
+    time 2.h
+
     publishDir "${params.outDir}/pruned"
 
     input:
@@ -100,34 +134,35 @@ process linkage_pruning {
 
     script:
     """
-    make_annotation_bed.sh "${vcf}" # creates id_annotation.bed.gz
-    bcftools annotate --threads ${task.cpus} -c CHROM,FROM,TO,ID -a id_annotation.bed.gz -o annotated.vcf.gz "${vcf}"
     plink --threads ${task.cpus} \
       --indep-pairwise 100kb 1 0.8 \
       --const-fid \
       --chr-set 38 \
       --real-ref-alleles \
       --keep-allele-order \
-      --vcf annotated.vcf.gz \
+      --vcf "${vcf}" \
       --out plink_pruning
     plink --extract plink_pruning.prune.in \
       --const-fid \
       --chr-set 38 \
       --real-ref-alleles \
       --keep-allele-order \
-      --vcf annotated.vcf.gz \
+      --vcf "${vcf}" \
       --recode vcf \
       --out "${vcf.getBaseName(2)}_pruned"
     bcftools query -l "${vcf.getBaseName(2)}_pruned.vcf" | sed 's/0_//' > reheader.txt &&
       bcftools reheader --threads ${task.cpus} -s reheader.txt -o tmp "${vcf.getBaseName(2)}_pruned.vcf" &&
       bcftools view --threads ${task.cpus} -o "${vcf.getBaseName(2)}_pruned.vcf.gz" -Oz tmp && rm tmp
     bcftools index --threads ${task.cpus} "${vcf.getBaseName(2)}_pruned.vcf.gz"
-    rm annotated.vcf.gz
     """
 }
 
 process remove_outgroups {
     cpus 4
+    executor 'lsf'
+    queue 'normal'
+    memory 1.GB
+    time 2.h
 
     input:
     tuple path(vcf), path(vcf_index)
@@ -145,6 +180,12 @@ process remove_outgroups {
 
 process pca {
     cpus 4
+    executor 'lsf'
+    queue 'normal'
+    memory 2.GB
+    time 2.h
+    clusterOptions '-R "select[avx2]"'
+
     publishDir "${params.outDir}/pca"
 
     input:
@@ -298,6 +339,10 @@ process plot_bionj_tree {
 
 process prepare_admixture_input {
     cpus 4
+    executor 'lsf'
+    queue 'normal'
+    memory 1.GB
+    time 2.h
 
     input:
     path sample_list
@@ -348,6 +393,10 @@ process run_admixture {
 
 process prepare_admixtools_input {
     cpus 4
+    executor 'lsf'
+    queue 'normal'
+    memory 1.GB
+    time 2.h
 
     input:
     tuple path(vcf), path(vcf_index)
@@ -407,6 +456,41 @@ process make_qpadm_input_files {
       --output-prefix "${bed.baseName}.pop1" \
       --pooling "${populations}"
     make_adm_combinations.R
+    """
+}
+
+process make_pooled_f4_input_files {
+    input:
+    tuple path(bed), path(bim), path(fam)
+    path(populations)
+
+    output:
+    tuple path("${bed.baseName}.pooledf4.bed"), path("${bed.baseName}.pooledf4.bim"), path("${bed.baseName}.pooledf4.fam")
+
+    script:
+    """
+    repopulate_plink.R \
+      --input-prefix "${bed.baseName}" \
+      --output-prefix "${bed.baseName}.pooledf4" \
+      --pooling "${populations}"
+    """
+}
+
+process pooled_f4_stats {
+    input:
+    tuple path(bed), path(bim), path(fam), val(subset)
+
+    output:
+    path("${bed.baseName}.csv")
+
+    publishDir "${params.outDir}/pooled_f4stats"
+
+    script:
+    """
+    pooled_f4_statistics.R \
+      --input "${bed.baseName}" \
+      --output "${bed.baseName}"."${subset}".csv \
+      --subset "${subset}"
     """
 }
 
@@ -474,7 +558,8 @@ workflow {
         - the pruned, tv-only VCF, restricted to ingroup samples -> used for PCA
     */
     vcf = remove_bad_samples(input_vcf_ch, filter_list)
-    transversions = select_transversion_sites(vcf)
+    annotated_vcf = annotate_vcf(vcf)
+    transversions = select_transversion_sites(annotated_vcf)
     
     pruned = linkage_pruning(transversions)
     ingroup = remove_outgroups(pruned, outgroup_list)
@@ -505,6 +590,11 @@ workflow {
     admixtools_files = prepare_admixtools_input(transversions)
     f4_stats(admixtools_files, f4plot_exclusions, populations)
 
+    /** pooled f4-statistics */
+    make_pooled_f4_input_files(admixtools_files, populations)
+        | combine(Channel.of("all", "chr1", "chr7", "chr21"))
+        | pooled_f4_stats
+
     /** qpAdm */
     qpadm_inputs = make_qpadm_input_files(admixtools_files, qpadm_pooling)
     combos = qpadm_inputs[1] | splitCsv(sep: '\t', header: true)
@@ -519,7 +609,4 @@ workflow {
       }
     qpadm_results = run_qpadm(run_qpadm_input_ch)
     qpadm_results.collect() | collate_qpadm
-
-    
-
 }
