@@ -27,6 +27,9 @@ params.qpAdmPooling
 /** A file listing all the targets to use when computing qpAdm */
 params.qpAdmTargets
 
+/** A file listing the population groupings to use when plotting pooled f4 results */
+params.f4plotGroups
+
 params.outDir
 
 process concat_filter_lists {
@@ -494,6 +497,24 @@ process pooled_f4_stats {
     """
 }
 
+process plot_pooled_f4_stats {
+    input:
+    tuple path(f4result), path(groupings)
+
+    output:
+    tuple path("${f4result.baseName}_ht.pdf"), path("${f4result.baseName}_ctvt.pdf")
+
+    publishDir "${params.outDir}/pooled_f4stats"
+
+    script:
+    """
+    plot_pooled_f4_statistics.R \
+      --input "${f4result}" \
+      --output "${f4result}" \
+      --groupings "${groupings}"
+    """
+}
+
 process run_qpadm {
     cpus { 1 }
     executor 'lsf'
@@ -547,6 +568,7 @@ workflow {
     f4plot_exclusions = Channel.fromFilePairs(params.f4plotExclusions, checkIfExists: true)
     qpadm_pooling = Channel.fromPath(params.qpAdmPooling, checkIfExists: true)
     qpadm_targets = Channel.fromPath(params.qpAdmTargets, checkIfExists: true)
+    f4plot_groups = Channel.fromPath(params.f4plotGroups, checkIfExists: true)
     
     /** Concatenate lists of samples to be filtered from VCFs */
     filter_list = concat_filter_lists(bad_samples.collect())
@@ -594,6 +616,9 @@ workflow {
     make_pooled_f4_input_files(admixtools_files, populations)
         | combine(Channel.of("all", "chr1", "chr7", "chr21"))
         | pooled_f4_stats
+
+    /** f4-statistics plots */
+    plot_pooled_f4_stats(pooled_f4_stats.out.combine(f4plot_groups)) 
 
     /** qpAdm */
     qpadm_inputs = make_qpadm_input_files(admixtools_files, qpadm_pooling)
