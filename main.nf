@@ -182,12 +182,12 @@ process remove_outgroups {
 }
 
 process pca {
-    cpus 4
-    executor 'lsf'
-    queue 'normal'
-    memory 2.GB
-    time 2.h
-    clusterOptions '-R "select[avx2]"'
+    // cpus 4
+    // executor 'lsf'
+    // queue 'normal'
+    // memory 2.GB
+    // time 2.h
+    // clusterOptions '-R "select[avx2]"'
 
     publishDir "${params.outDir}/pca"
 
@@ -391,6 +391,50 @@ process run_admixture {
     
     """
     admixture --cv=10 -j${task.cpus} -s "${seed}" "${bed}" ${k} | tee "${bed.baseName}.${k}.log"
+    """
+}
+
+process get_admixture_errors {
+    input:
+    tuple val(k), val(rep), path(logFile)
+
+    output:
+    path("${k}_${rep}_error.txt")
+
+    script:
+    """
+    perl -ne 'if (/^CV error \\(K=(\\d+)\\):\\s+([\\d.]+)\$/) { print "$rep\\t\$1\\t\$2\\n"; }' "$logFile" > "${k}_${rep}_error.txt"
+    """
+}
+
+process collate_admixture_errors {
+    input:
+    path errorFiles
+
+    output:
+    path("admixture_errors.txt")
+
+    script:
+    """
+    printf "rep\\tk\\terror\\n" > "admixture_errors.txt"
+    cat ${errorFiles} | sort -V >> "admixture_errors.txt"
+    """
+}
+
+process plot_admixture_errors {
+    input:
+    path errorFile
+
+    output:
+    path("${errorFile.baseName}.pdf")
+
+    publishDir "${params.outDir}/admixture"
+
+    script:
+    """
+    plot_admixture_errors.R \
+      -i "${errorFile}" \
+      -o "${errorFile.baseName}.pdf"
     """
 }
 
@@ -607,6 +651,11 @@ workflow {
     admixture_reps = Channel.from(1..10)
     admixture_inputs = admixture_files.combine(admixture_ks.combine(admixture_reps))
     run_admixture(admixture_inputs)
+    run_admixture.out.logs |
+      get_admixture_errors |
+      collect |
+      collate_admixture_errors |
+      plot_admixture_errors
 
     /** f4-statistics */
     admixtools_files = prepare_admixtools_input(transversions)
