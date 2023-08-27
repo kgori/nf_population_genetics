@@ -9,7 +9,7 @@ params.sampleList
 /** Files naming outgroup samples to remove from PCA */
 params.outgroupList
 
-/** Single file listing the samples to be used for ADMIXTURE */
+/** Single file listing the samples and populations to be used for ADMIXTURE */
 params.admixtureList
 
 /** Single file listing the population each sample belongs to */
@@ -356,7 +356,8 @@ process prepare_admixture_input {
 
     script:
     """
-    bcftools view --threads ${task.cpus} -S "${sample_list}" --force-samples "${vcf}" -Oz -o "${vcf.getBaseName(2)}_admixture.vcf.gz"
+    cut -f1 "${sample_list}" > sample_list.txt
+    bcftools view --threads ${task.cpus} -S sample_list.txt --force-samples "${vcf}" -Oz -o "${vcf.getBaseName(2)}_admixture.vcf.gz"
     plink --threads ${task.cpus} \
       --double-id \
       --chr-set 38 \
@@ -435,6 +436,24 @@ process plot_admixture_errors {
     plot_admixture_errors.R \
       -i "${errorFile}" \
       -o "${errorFile.baseName}.pdf"
+    """
+}
+
+process plot_admixture_result {
+    input:
+    tuple val(k), val(rep), path(Q), path(P), path(populations)
+
+    output:
+    path("${Q.baseName}.pdf")
+
+    publishDir "${params.outDir}/admixture/${rep}"
+
+    script:
+    """
+    plot_admixture_result.R \
+      --input_file "${Q}" \
+      --pops "${populations}" \
+      --output_file "${Q.baseName}.pdf"
     """
 }
 
@@ -541,9 +560,25 @@ process pooled_f4_stats {
     """
 }
 
-process plot_pooled_f4_stats {
+process determine_plotting_order {
     input:
     tuple path(f4result), path(groupings)
+
+    output:
+    path("pooled_f4_stats_plotting_order.txt")
+
+    script:
+    """
+    determine_plotting_order.R \
+      --input "${f4result}" \
+      --output "pooled_f4_stats_plotting_order.txt" \
+      --groupings "${groupings}"
+    """
+}
+
+process plot_pooled_f4_stats {
+    input:
+    tuple path(f4result), path(groupings), path(order)
 
     output:
     tuple path("${f4result.baseName}_ht.pdf"), path("${f4result.baseName}_ctvt.pdf")
@@ -555,6 +590,7 @@ process plot_pooled_f4_stats {
     plot_pooled_f4_statistics.R \
       --input "${f4result}" \
       --output "${f4result}" \
+      --order "${order}" \
       --groupings "${groupings}"
     """
 }
@@ -656,6 +692,8 @@ workflow {
       collect |
       collate_admixture_errors |
       plot_admixture_errors
+    run_admixture.out.results.combine(admixture_samples) |
+      plot_admixture_result
 
     /** f4-statistics */
     admixtools_files = prepare_admixtools_input(transversions)
@@ -667,7 +705,12 @@ workflow {
         | pooled_f4_stats
 
     /** f4-statistics plots */
-    plot_pooled_f4_stats(pooled_f4_stats.out.combine(f4plot_groups)) 
+    plotting_order_input = pooled_f4_stats.out |
+      branch { it ->
+          TRUE: it.baseName.endsWith("all")
+      }
+    plotting_order = determine_plotting_order(plotting_order_input.TRUE.combine(f4plot_groups))
+    plot_pooled_f4_stats(pooled_f4_stats.out.combine(f4plot_groups).combine(plotting_order)) 
 
     /** qpAdm */
     qpadm_inputs = make_qpadm_input_files(admixtools_files, qpadm_pooling)

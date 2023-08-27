@@ -2,10 +2,13 @@
 
 library(argparse)
 parser <- argparse::ArgumentParser()
-parser$add_argument("--input", help = "Input file")
-parser$add_argument("--output", help = "Prefix for output PDF files")
+parser$add_argument("--input", help = "Input file", required = TRUE)
+parser$add_argument("--output", help = "Prefix for output PDF files",
+    required = TRUE)
 parser$add_argument("--groupings",
-    help = "CSV file with population groupings for plot")
+    help = "CSV file with population groupings for plot", required = TRUE)
+parser$add_argument("--order",
+    help = "CSV file with population order for plot", required = TRUE)
 args <- parser$parse_args()
 
 if (!file.exists(args$input)) {
@@ -16,30 +19,23 @@ if (!file.exists(args$groupings)) {
     stop(sprintf("Groupings file does not exist: %s", args$groupings))
 }
 
+if (!file.exists(args$order)) {
+    stop(sprintf("Order file does not exist: %s", args$order))
+}
+
 library(ggplot2)
 library(data.table)
 
-load_f4_data <- function(datafilename, groupingfilename) { # nolint start
+load_f4_data <- function(datafilename, groupingfilename, orderfilename) { # nolint start
     require(data.table)
-    stopifnot(all(file.exists(datafilename, groupingfilename)))
+    stopifnot(all(file.exists(datafilename, groupingfilename, orderfilename)))
     f4s <- fread(datafilename)
     groupings <- fread(groupingfilename)
+    ordering <- fread(orderfilename)
     dt <- f4s[groupings, , on = "pop4"]
-    setorder(dt, pop2, Group, -est)
-    dt[, I := seq_len(.N)]
+    dt[ordering, I := i.I, on = "pop4"]
     dt[, ci_l := est - 3 * se]
     dt[, ci_u := est + 3 * se]
-    dt
-} # nolint end
-
-# Reorder sample data to be in descending order of f4 within population groups,
-# as measured for HT.
-reorder_table <- function(dt) { # nolint start
-    setorder(dt, pop2, Group, -est)
-    dt[, I := seq_len(.N)]
-    truth <- dt[pop2 == "HT", .(pop4, I)]
-    dt[, I := NULL]
-    dt[truth, I := i.I, on = "pop4"]
     dt
 } # nolint end
 
@@ -65,7 +61,7 @@ plot_f4_data <- function(data, target = c("HT", "CTVT")) { # nolint start
     plot
 } # nolint end
 
-f4 <- reorder_table(load_f4_data(args$input, args$groupings))
+f4 <- load_f4_data(args$input, args$groupings, args$order)
 p_ht <- plot_f4_data(f4, target = "HT")
 p_ctvt <- plot_f4_data(f4, target = "CTVT")
 
