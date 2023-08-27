@@ -404,7 +404,9 @@ process get_admixture_errors {
 
     script:
     """
-    perl -ne 'if (/^CV error \\(K=(\\d+)\\):\\s+([\\d.]+)\$/) { print "$rep\\t\$1\\t\$2\\n"; }' "$logFile" > "${k}_${rep}_error.txt"
+    perl -ne 'if (/^CV error \\(K=(\\d+)\\):\\s+([\\d.]+)\$/) { print "$rep\\t\$1\\t\$2\\n"; }' "$logFile" > err
+    perl -ne 'if (/^Loglikelihood: ([\\d.+-]+)\$/) { print "\$1\\n"; }' "$logFile" > ll
+    paste err ll > "${k}_${rep}_error.txt" && rm err ll
     """
 }
 
@@ -415,9 +417,11 @@ process collate_admixture_errors {
     output:
     path("admixture_errors.txt")
 
+    publishDir "${params.outDir}/admixture"
+
     script:
     """
-    printf "rep\\tk\\terror\\n" > "admixture_errors.txt"
+    printf "rep\\tk\\terror\\tloglik\\n" > "admixture_errors.txt"
     cat ${errorFiles} | sort -V >> "admixture_errors.txt"
     """
 }
