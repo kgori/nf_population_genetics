@@ -603,24 +603,31 @@ process run_qpadm {
     cpus { 1 }
     executor 'lsf'
     queue 'small'
-    memory 500.MB
-    time { 30.min }
+    memory { 500.MB * 2**(task.attempt-1) }
+    time { 30.min * 2**(task.attempt-1) }
+    errorStrategy 'retry'
+    maxRetries 2
 
     input:
     tuple path(bed), path(bim), path(fam), val(left), val(right), val(target)
 
     output:
-    path("${target}.${left.replace(',','_')}.${right.replace(',','_')}.RDS")
+    path("*.RDS")
 
     publishDir "${params.outDir}/qpadm/rds_files"
 
     script:
     """
-    run_adm_combo.R \
-      --target="${target}" \
-      --left="${left}" \
-      --right="${right}" \
-      --sampleset="${bed.baseName}"
+    lefts=(${left.join(' ')})
+    rights=(${right.join(' ')})
+    targets=(${target.join(' ')})
+    for i in \$(seq 0 ${left.size() - 1}); do
+      run_adm_combo.R \
+        --target=\${targets[i]} \
+        --left=\${lefts[i]} \
+        --right=\${rights[i]} \
+        --sampleset="${bed.baseName}"
+    done
     """
 }
 
@@ -728,6 +735,8 @@ workflow {
         def target = it[5];
         !(left.contains(target) || right.contains(target))
       }
-    qpadm_results = run_qpadm(run_qpadm_input_ch)
+    qpadm_batches_ch = run_qpadm_input_ch
+        .groupTuple(by: [0, 1, 2], size: 50, remainder: true)
+    qpadm_results = run_qpadm(qpadm_batches_ch)
     qpadm_results.collect() | collate_qpadm
 }
