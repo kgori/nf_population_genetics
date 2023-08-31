@@ -31,11 +31,18 @@ parser$add_argument("--ancient",
 
 args <- parser$parse_args()
 
+print(sprintf("Target = %s", args$target))
+print(sprintf("Left = %s", args$left))
+print(sprintf("Right = %s", args$right))
+
 if (!(file.exists(paste0(args$sampleset, ".bed")))) {
     stop("Sampleset file %s does not exist", paste0(args$sampleset, ".bed"))
 }
 
 estimate_rank <- function(rank_table, alpha = 0.05) { # nolint start
+    if (is.null(rank_table)) {
+        return (0)
+    }
     dt <- as.data.table(copy(rank_table))
     rank <- dt[, max(f4rank) + 1]
     for (i in seq_len(nrow(dt))) {
@@ -43,7 +50,7 @@ estimate_rank <- function(rank_table, alpha = 0.05) { # nolint start
             break
         }
         rank <- dt[i, f4rank]
-        if (dt[i, p_nested] < alpha) {
+        if (dt[i, is.na(p_nested)] | dt[i, p_nested] < alpha) {
             break
         }
     }
@@ -100,9 +107,10 @@ if (length(left) > 1) {
         target = NULL,
         allsnps = TRUE,
         blgsize = 50000,
-        auto_only = FALSE
+        auto_only = FALSE,
+        verbose = FALSE
     )
-    adm_result$wave.rankdrop <- wave_result$rankdrop
+    adm_result$wave_rankdrop <- wave_result$rankdrop
 
     # Store the f4 table for the wave analysis
     wave_f4blockdat <- f4blockdat_from_geno(
@@ -111,7 +119,8 @@ if (length(left) > 1) {
         right = right,
         allsnps = TRUE,
         blgsize = 50000,
-        auto_only = FALSE
+        auto_only = FALSE,
+        verbose = FALSE
     )
     adm_result$wavef4 <- admixtools:::f4blockdat_to_f4out(wave_f4blockdat,
         boot = FALSE)
@@ -124,7 +133,7 @@ if (length(left) > 1) {
     # This seems arbitrary, so we will run the analysis for all possible
     # permutations of the left pops and work out the rank estimate for each.
     # Change the significance level to account for multiple tests.
-    adm_result$multiple_testing_wave_rank_estimates <- sapply(seq_along(left),
+    res <- sapply(seq_along(left),
         function(i) {
         wave_result_i <- qpadm(
             args$sampleset,
@@ -136,8 +145,15 @@ if (length(left) > 1) {
             auto_only = FALSE,
             verbose = FALSE
         )
-        estimate_rank(wave_result_i, alpha = 0.05 / length(left))
+        # Estimate rank with and without multiple testing correction
+        list(nomt = estimate_rank(wave_result_i$rankdrop,
+                alpha = 0.05),
+             mt = estimate_rank(wave_result_i$rankdrop,
+                    alpha = 0.05 / length(left)))
     })
+
+    adm_result$permutation_wave_rank_estimates <- res["nomt", ]
+    adm_result$permutation_wave_rank_estimates_mt <- res["mt", ]
 }
 
 adm_result$left <- left
