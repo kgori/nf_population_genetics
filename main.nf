@@ -105,7 +105,7 @@ process select_transversion_sites {
     memory 1.GB
     time 2.h
 
-    publishDir "${params.outDir}/transversions"
+    publishDir "${params.outDir}/transversions", mode: 'copy'
 
     input:
     path vcf
@@ -127,7 +127,7 @@ process linkage_pruning {
     memory 1.GB
     time 2.h
 
-    publishDir "${params.outDir}/pruned"
+    publishDir "${params.outDir}/pruned", mode: 'copy'
 
     input:
     tuple path(vcf), path(vcf_index)
@@ -189,7 +189,7 @@ process pca {
     // time 2.h
     // clusterOptions '-R "select[avx2]"'
 
-    publishDir "${params.outDir}/pca"
+    publishDir "${params.outDir}/pca", mode: 'copy'
 
     input:
     tuple path(vcf), path(vcf_index)
@@ -208,7 +208,7 @@ process pca {
 }
 
 process plot_pca {
-    publishDir "${params.outDir}/pca"
+    publishDir "${params.outDir}/pca", mode: 'copy'
 
     input:
     tuple path(pca_evec_file), path(pca_eval_file)
@@ -225,7 +225,7 @@ process plot_pca {
 }
 
 process bionj {
-    publishDir "${params.outDir}/bionj"
+    publishDir "${params.outDir}/bionj", mode: 'copy'
 
     input:
     tuple path(vcf), path(vcf_index)
@@ -290,7 +290,7 @@ process bionj_bootstrap {
     errorStrategy 'retry'
     maxRetries 2
 
-    publishDir "${params.outDir}/bionj/bootstrap"
+    publishDir "${params.outDir}/bionj/bootstrap", mode: 'copy'
 
     input:
     tuple path(vcf), path(vcf_index)
@@ -309,7 +309,7 @@ process bionj_bootstrap {
 }
 
 process annotate_bootstrap_info {
-    publishDir "${params.outDir}/bionj"
+    publishDir "${params.outDir}/bionj", mode: 'copy'
 
     input:
     path(bionj)
@@ -325,7 +325,7 @@ process annotate_bootstrap_info {
 }
 
 process plot_bionj_tree {
-    publishDir "${params.outDir}/bionj"
+    publishDir "${params.outDir}/bionj", mode: 'copy'
 
     input:
     path(newick)
@@ -378,7 +378,7 @@ process run_admixture {
     errorStrategy 'retry'
     maxRetries 2
 
-    publishDir "${params.outDir}/admixture/${rep}"
+    publishDir "${params.outDir}/admixture/${rep}", mode: 'copy'
 
     input:
     tuple path(bed), path(bim), path(fam), val(k), val(rep)
@@ -417,7 +417,7 @@ process collate_admixture_errors {
     output:
     path("admixture_errors.txt")
 
-    publishDir "${params.outDir}/admixture"
+    publishDir "${params.outDir}/admixture", mode: 'copy'
 
     script:
     """
@@ -433,7 +433,7 @@ process plot_admixture_errors {
     output:
     path("${errorFile.baseName}.pdf")
 
-    publishDir "${params.outDir}/admixture"
+    publishDir "${params.outDir}/admixture", mode: 'copy'
 
     script:
     """
@@ -450,7 +450,7 @@ process plot_admixture_result {
     output:
     path("${Q.baseName}.pdf")
 
-    publishDir "${params.outDir}/admixture/${rep}"
+    publishDir "${params.outDir}/admixture/${rep}", mode: 'copy'
 
     script:
     """
@@ -495,7 +495,7 @@ process f4_stats {
     output:
     tuple path("${bed.baseName}_HT_combined.pdf"), path("${bed.baseName}_CTVT_combined.pdf")
 
-    publishDir "${params.outDir}/f4stats"
+    publishDir "${params.outDir}/f4stats", mode: 'copy'
 
     script:
     """
@@ -553,7 +553,7 @@ process pooled_f4_stats {
     output:
     path("${bed.baseName}.${subset}.csv")
 
-    publishDir "${params.outDir}/pooled_f4stats"
+    publishDir "${params.outDir}/pooled_f4stats", mode: 'copy'
 
     script:
     """
@@ -587,7 +587,7 @@ process plot_pooled_f4_stats {
     output:
     tuple path("${f4result.baseName}_ht.pdf"), path("${f4result.baseName}_ctvt.pdf")
 
-    publishDir "${params.outDir}/pooled_f4stats"
+    publishDir "${params.outDir}/pooled_f4stats", mode: 'copy'
 
     script:
     """
@@ -602,9 +602,9 @@ process plot_pooled_f4_stats {
 process run_qpadm {
     cpus { 1 }
     executor 'lsf'
-    queue 'small'
+    queue 'normal'
     memory { 500.MB * 2**(task.attempt-1) }
-    time { 30.min * 2**(task.attempt-1) }
+    time { 45.min * 2**(task.attempt-1) }
     errorStrategy 'retry'
     maxRetries 2
 
@@ -638,7 +638,7 @@ process collate_qpadm {
     output:
     path("qpadm_results.tsv")
 
-    publishDir "${params.outDir}/qpadm"
+    publishDir "${params.outDir}/qpadm", mode: 'copy'
 
     script:
     """
