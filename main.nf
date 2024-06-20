@@ -595,7 +595,9 @@ process plot_pooled_f4_stats {
       --input "${f4result}" \
       --output "${f4result}" \
       --order "${order}" \
-      --groupings "${groupings}"
+      --groupings "${groupings}" \
+      --plot_height 3.9 \
+      --plot_width 10.4
     """
 }
 
