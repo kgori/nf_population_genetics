@@ -9,6 +9,10 @@ parser$add_argument("--groupings",
     help = "CSV file with population groupings for plot", required = TRUE)
 parser$add_argument("--order",
     help = "CSV file with population order for plot", required = TRUE)
+parser$add_argument("--plot_height", help = "Height of plot in inches",
+    type = "numeric", default = 5)
+parser$add_argument("--plot_width", help = "Width of plot in inches",
+    type = "numeric", default = 10)
 args <- parser$parse_args()
 
 if (!file.exists(args$input)) {
@@ -66,6 +70,6 @@ p_ht <- plot_f4_data(f4, target = "HT")
 p_ctvt <- plot_f4_data(f4, target = "CTVT")
 
 ggsave(paste(tools::file_path_sans_ext(args$output), "ht.pdf", sep = "_"),
-    plot = p_ht, width = 10, height = 5)
+    plot = p_ht, width = args$plot_width, height = args$plot_height)
 ggsave(paste(tools::file_path_sans_ext(args$output), "ctvt.pdf", sep = "_"),
-    plot = p_ctvt, width = 10, height = 5)
+    plot = p_ctvt, width = args$plot_width, height = args$plot_height)
